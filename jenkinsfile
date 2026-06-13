@@ -1,0 +1,57 @@
+pipeline {
+    agent any
+    
+    // 定义环境变量，方便后续修改
+    environment {
+        DEPLOY_USER = '13458'                           // 远端服务器登录用户名
+        DEPLOY_HOST = 'localhost'                       // 远端服务器IP（本机测试用 localhost）
+        DEPLOY_PATH = 'C:/Users/13458/my-app'           // 远端服务器上的部署目录（Windows路径）
+        SSH_CREDENTIAL_ID = 'windows-deploy-key'        // 刚才在Jenkins配置的SSH凭据ID
+    }
+    
+    stages {
+        // 1. 拉取代码阶段（对应你的步骤2）
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        // 2. 构建阶段（对应你的步骤3，Maven干活）
+        stage('Build') {
+            steps {
+                // 清理并打包，跳过测试以加快首次运行速度
+                sh 'mvn clean package -DskipTests'  
+            }
+        }
+        
+        // 3. 部署到远端服务器阶段（对应你的步骤4）
+        stage('Deploy') {
+            steps {
+                // 使用 sshagent 插件，Jenkins 会自动注入私钥进行免密登录
+                sshagent(credentials: [SSH_CREDENTIAL_ID]) {
+                    sh """
+                        # 在 Windows 上创建部署目录（如果不存在）
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "if not exist ${DEPLOY_PATH} mkdir ${DEPLOY_PATH}"
+                        
+                        # 将构建产物（如 jar 包）传输到远端服务器
+                        scp target/*.jar ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/app.jar
+                        
+                        # 在 Windows 上后台启动应用（重定向日志避免阻塞）
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "cd ${DEPLOY_PATH} && start /b java -jar app.jar"
+                    """
+                }
+            }
+        }
+    }
+    
+    // 构建后的通知（可选）
+    post {
+        success {
+            echo '🎉 部署成功！展厅已开门迎客！'
+        }
+        failure {
+            echo '❌ 部署失败，请检查控制台日志！'
+        }
+    }
+}
